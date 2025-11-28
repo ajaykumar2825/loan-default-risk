@@ -38,7 +38,10 @@ This project provides a transparent, explainable solution to predict default ris
 ---
 
 ## 📸 Screenshots
-
+<img width="1045" height="568" alt="pic 1" src="https://github.com/user-attachments/assets/a5c16881-2a2f-401c-991b-5c63b75d16dc" />
+<img width="1038" height="497" alt="pic 2" src="https://github.com/user-attachments/assets/1dab737c-6f0b-44f0-9c72-c83875c6a87f" />
+<img width="1160" height="600" alt="pic 3" src="https://github.com/user-attachments/assets/2883b75f-7030-47c7-b7eb-7a73f03f51da" />
+<img width="1298" height="384" alt="pic 4" src="https://github.com/user-attachments/assets/2d9b9a3a-a929-405a-9b5e-4ec3f60f1237" />
 ---
 
 ## ⚙️ How to Run Locally
