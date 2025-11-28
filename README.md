@@ -32,7 +32,7 @@ This project provides a transparent, explainable solution to predict default ris
 ---
 
 ## live demo
-<a href = https://loan-default-risk-qmqjm5gktz5k6rgg65vw8r.streamlit.app/> click here </a>
+<a href = https://loan-default-risk-fp3mpbhgpz38rnk5fvdd2f.streamlit.app/> click here </a>
 
 ## 📈 Model Performance
 | Model                  | ROC-AUC | F1 (Default) | Recall (Default) |
