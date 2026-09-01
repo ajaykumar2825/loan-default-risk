@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.streamlit/secrets.toml
+models/*.pkl
+database/*.db
+data/loan_default_dataset.csv
