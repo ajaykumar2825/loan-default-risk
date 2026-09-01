@@ -2,6 +2,7 @@ from __future__ import annotations
 import joblib
 import numpy as np
 import pandas as pd
+import sklearn
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
@@ -13,10 +14,28 @@ from imblearn.pipeline import Pipeline as ImbPipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
-from .constants import CATEGORICAL_COLUMNS, MODEL_DIR, MODEL_PATH, NUMERIC_COLUMNS, RAW_FEATURES
+from .constants import CATEGORICAL_COLUMNS, MODEL_DIR, MODEL_PATH, MODEL_SCHEMA_VERSION, NUMERIC_COLUMNS, RAW_FEATURES
+
+BINARY_VALUES = {"yes": 1, "y": 1, "true": 1, "1": 1, "default": 1, "previous default": 1, "no": 0, "n": 0, "false": 0, "0": 0, "none": 0, "no default": 0}
+
+def normalize_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return model-ready raw inputs while accepting common CSV spellings safely."""
+    missing = [column for column in RAW_FEATURES if column not in frame.columns]
+    if missing:
+        raise ValueError("Missing required columns: " + ", ".join(missing))
+    clean = frame.loc[:, RAW_FEATURES].copy()
+    for column in NUMERIC_COLUMNS:
+        values = clean[column]
+        if column == "Previous_Default":
+            text = values.astype("string").str.strip().str.lower()
+            values = text.map(BINARY_VALUES).where(text.isin(BINARY_VALUES), values)
+        clean[column] = pd.to_numeric(values, errors="coerce")
+    for column in CATEGORICAL_COLUMNS:
+        clean[column] = clean[column].astype("string").str.strip().fillna("Unknown")
+    return clean
 
 def engineer(frame):
-    x = frame.copy()
+    x = normalize_features(frame)
     x["Income_to_Loan_Ratio"] = x.Annual_Income / x.Loan_Amount.clip(lower=1)
     x["EMI_Burden"] = x.Existing_EMI / x.Monthly_Income.clip(lower=1)
     x["Loan_Utilization"] = x.Loan_Amount / x.Annual_Income.clip(lower=1)
@@ -39,7 +58,9 @@ def build_pipeline(kind="Random Forest"):
     return ImbPipeline([("prep",prep),("smote",SMOTE(random_state=42)),("model",choices[kind])])
 
 def train_models(df, compare_all=False):
-    X, y = engineer(df[RAW_FEATURES]), df.Default
+    if "Default" not in df:
+        raise ValueError("Training data must include the Default target column.")
+    X, y = engineer(df), pd.to_numeric(df.Default, errors="raise").astype(int)
     Xtr, Xte, ytr, yte = train_test_split(X,y,stratify=y,test_size=.2,random_state=42)
     names = ["Logistic Regression","Decision Tree","Random Forest","XGBoost"] if compare_all else ["Random Forest"]
     results=[]; curves={}; best=None; best_auc=-1
@@ -48,18 +69,26 @@ def train_models(df, compare_all=False):
         metrics={"model":name,"accuracy":accuracy_score(yte,pred),"precision":precision_score(yte,pred,zero_division=0),"recall":recall_score(yte,pred),"f1":f1_score(yte,pred),"roc_auc":roc_auc_score(yte,p)}; results.append(metrics)
         fpr,tpr,_=roc_curve(yte,p); curves[name]={"fpr":fpr,"tpr":tpr}
         if metrics["roc_auc"] > best_auc: best_auc,best=metrics["roc_auc"],{"pipeline":pipe,"name":name,"metrics":metrics}
+    best.update({"schema_version": MODEL_SCHEMA_VERSION, "sklearn_version": sklearn.__version__, "raw_features": RAW_FEATURES})
     MODEL_DIR.mkdir(exist_ok=True); joblib.dump(best, MODEL_PATH)
     return best, pd.DataFrame(results).sort_values("roc_auc",ascending=False), curves
 
 def ensure_model(df):
-    if not MODEL_PATH.exists(): return train_models(df, False)[0]
-    return joblib.load(MODEL_PATH)
-def predict(bundle, frame): return bundle["pipeline"].predict_proba(engineer(frame[RAW_FEATURES]))[:,1]
+    """Load only a compatible artifact; retrain stale pickles automatically."""
+    if MODEL_PATH.exists():
+        try:
+            bundle = joblib.load(MODEL_PATH)
+            if (bundle.get("schema_version") == MODEL_SCHEMA_VERSION and bundle.get("sklearn_version") == sklearn.__version__ and bundle.get("raw_features") == RAW_FEATURES):
+                return bundle
+        except (AttributeError, ImportError, ModuleNotFoundError, ValueError, EOFError):
+            pass
+    return train_models(df, False)[0]
+def predict(bundle, frame): return bundle["pipeline"].predict_proba(engineer(frame))[:,1]
 def feature_importance(bundle):
     pipe=bundle["pipeline"]; model=pipe.named_steps["model"]; names=pipe.named_steps["prep"].get_feature_names_out(); values=getattr(model,"feature_importances_", np.abs(getattr(model,"coef_",np.zeros((1,len(names))))).ravel())
     return pd.DataFrame({"feature":[str(n).replace("num__","").replace("cat__","") for n in names],"importance":values}).sort_values("importance",ascending=False)
 def explain_prediction(bundle, applicant):
-    a=applicant; messages=[]
+    a=normalize_features(pd.DataFrame([applicant])).iloc[0]; messages=[]
     if a["Credit_Score"] < 620: messages.append(f"Credit score of {a['Credit_Score']} is below the preferred range and increases risk.")
     if a["Debt_To_Income_Ratio"] > .42: messages.append(f"Debt-to-income ratio of {a['Debt_To_Income_Ratio']:.0%} indicates a heavy repayment burden.")
     if a["Missed_Payments"] > 1: messages.append(f"{a['Missed_Payments']} missed payments signal recent repayment stress.")
